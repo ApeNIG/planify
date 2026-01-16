@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "planify"
+version = "0.1.0"
+description = "Multi-agent planning orchestrator for software projects"
+authors = ["User"]
+readme = "README.md"
+packages = [{include = "planify"}]
+
+[tool.poetry.scripts]
+planify = "planify.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+openai = "^1.0"
+anthropic = "^0.40"
+click = "^8.0"
+pydantic = "^2.0"
+pyyaml = "^6.0"
+jinja2 = "^3.0"
+rich = "^13.0"
+httpx = "^0.27"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-asyncio = "^0.24"
+respx = "^0.21"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
