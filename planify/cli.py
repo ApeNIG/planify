@@ -18,7 +18,7 @@ from rich.table import Table
 from planify import __version__
 from planify.config import PlanifyConfig
 from planify.orchestrator import Orchestrator, Session, Phase
-from planify.output import MarkdownGenerator, TaskExtractor
+from planify.output import MarkdownGenerator, TaskExtractor, DocImpactAnalysis, render_doc_impacts_markdown
 from planify.providers.base import ProviderError
 
 if TYPE_CHECKING:
@@ -106,6 +106,15 @@ async def async_main(
     if max_rounds:
         config.limits.max_rounds = max_rounds
 
+    # Handle dry-run early (skip API key check)
+    if dry_run:
+        console.print(f"\n[bold]Task:[/bold] {task}")
+        console.print(f"[bold]Repository:[/bold] {repo.resolve()}")
+        console.print(f"[bold]Max rounds:[/bold] {config.limits.max_rounds}")
+        console.print()
+        console.print("[yellow]DRY RUN - No actual API calls will be made[/yellow]")
+        return 0
+
     # Check for API keys based on config
     import os
 
@@ -162,10 +171,6 @@ async def async_main(
         console.print(f"[bold]Max rounds:[/bold] {config.limits.max_rounds}")
         console.print()
 
-        if dry_run:
-            console.print("[yellow]DRY RUN - No actual API calls will be made[/yellow]")
-            return 0
-
         # Run planning
         with Progress(
             SpinnerColumn(),
@@ -189,11 +194,33 @@ async def async_main(
         # Generate output
         generator = MarkdownGenerator()
 
+        # Generate doc impacts markdown if analysis is available
+        doc_impacts_md = None
+        if session.doc_impact_analysis:
+            # Reconstruct the analysis object from the dict
+            analysis = DocImpactAnalysis(
+                impacts=[],  # We only need the raw dict for rendering
+                warnings=session.doc_impact_analysis.get("warnings", []),
+            )
+            # Use the stored analysis directly
+            from planify.output.doc_impact import DocImpact, DocImpactPriority
+            for impact_dict in session.doc_impact_analysis.get("impacts", []):
+                analysis.impacts.append(DocImpact(
+                    doc_path=impact_dict["doc_path"],
+                    area=impact_dict["area"],
+                    reason=impact_dict["reason"],
+                    priority=DocImpactPriority(impact_dict["priority"]),
+                    match_score=impact_dict.get("match_score", 0),
+                    matched_keywords=impact_dict.get("matched_keywords", []),
+                ))
+            doc_impacts_md = render_doc_impacts_markdown(analysis)
+
         if output:
             output_path = generator.save(
                 session,
                 output,
                 include_transcript=verbose,
+                doc_impacts_markdown=doc_impacts_md,
             )
             console.print(f"[green]Plan saved:[/green] {output_path}")
         else:
@@ -201,7 +228,11 @@ async def async_main(
             console.print("\n" + "=" * 60)
             console.print("[bold green]FINAL PLAN[/bold green]")
             console.print("=" * 60 + "\n")
-            final_markdown = generator.generate(session, include_transcript=False)
+            final_markdown = generator.generate(
+                session,
+                include_transcript=False,
+                doc_impacts_markdown=doc_impacts_md,
+            )
             try:
                 console.print(Markdown(final_markdown))
             except (UnicodeEncodeError, OSError):
@@ -221,6 +252,14 @@ async def async_main(
         table.add_row("Rounds", str(session.round))
         table.add_row("Total Cost", f"${session.total_cost_usd:.4f}")
         table.add_row("Files Loaded", str(len(session.files_loaded)))
+
+        # Add doc impacts count if available
+        if session.doc_impact_analysis:
+            impacts = session.doc_impact_analysis.get("impacts", [])
+            required = sum(1 for i in impacts if i.get("priority") == "required")
+            recommended = sum(1 for i in impacts if i.get("priority") == "recommended")
+            if required or recommended:
+                table.add_row("Doc Updates", f"{required} required, {recommended} recommended")
 
         console.print(table)
 

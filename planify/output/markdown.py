@@ -25,6 +25,14 @@ DEFAULT_TEMPLATE = """# Plan: {{ title }}
 
 {{ final_plan }}
 
+{% if doc_impacts %}
+---
+
+## Doc Updates Required
+
+{{ doc_impacts }}
+{% endif %}
+
 ---
 
 {% if include_transcript %}
@@ -75,12 +83,14 @@ class MarkdownGenerator:
         self,
         session: "Session",
         include_transcript: bool = False,
+        doc_impacts_markdown: str | None = None,
     ) -> str:
         """Generate markdown from a session.
 
         Args:
             session: The planning session
             include_transcript: Whether to include the full conversation
+            doc_impacts_markdown: Pre-rendered doc impacts markdown (optional)
 
         Returns:
             Markdown string
@@ -107,6 +117,7 @@ class MarkdownGenerator:
             "conversation": [t.to_dict() for t in session.conversation],
             "include_transcript": include_transcript,
             "files_loaded": session.files_loaded,
+            "doc_impacts": doc_impacts_markdown,
         }
 
         # Try to load custom template, fall back to default
@@ -125,6 +136,7 @@ class MarkdownGenerator:
         session: "Session",
         output_path: Path,
         include_transcript: bool = False,
+        doc_impacts_markdown: str | None = None,
     ) -> Path:
         """Generate and save markdown to a file.
 
@@ -132,12 +144,13 @@ class MarkdownGenerator:
             session: The planning session
             output_path: Path to save to (can use {slug} placeholder)
             include_transcript: Whether to include the full conversation
+            doc_impacts_markdown: Pre-rendered doc impacts markdown (optional)
 
         Returns:
             Path to the saved file
         """
         # Generate markdown
-        markdown = self.generate(session, include_transcript)
+        markdown = self.generate(session, include_transcript, doc_impacts_markdown)
 
         # Resolve path with slug placeholder
         if "{slug}" in str(output_path):

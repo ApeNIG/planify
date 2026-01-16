@@ -17,7 +17,12 @@ from planify.agents import (
     IntegratorAgent,
 )
 from planify.config import PlanifyConfig
-from planify.context import ContextLoader, LoadedContext
+from planify.context import ContextLoader, LoadedContext, parse_doc_architecture
+from planify.output.doc_impact import (
+    DocImpactAnalysis,
+    analyze_plan_impact,
+    render_doc_impacts_markdown,
+)
 from planify.providers import (
     LLMProvider,
     OpenAIProvider,
@@ -82,6 +87,8 @@ class Session:
     tokens_used: int = 0
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    # Doc-aware planning: analysis of which docs need updating
+    doc_impact_analysis: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -97,6 +104,7 @@ class Session:
             "tokens_used": self.tokens_used,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "doc_impact_analysis": self.doc_impact_analysis,
         }
 
     @classmethod
@@ -116,6 +124,7 @@ class Session:
             tokens_used=data["tokens_used"],
             created_at=data["created_at"],
             updated_at=data["updated_at"],
+            doc_impact_analysis=data.get("doc_impact_analysis"),
         )
 
     def save(self, session_dir: Path) -> Path:
@@ -222,6 +231,9 @@ class Orchestrator:
         loader = ContextLoader(self.config.context)
         context = loader.load(repo_path)
 
+        # Parse doc architecture for doc-aware planning
+        doc_arch = parse_doc_architecture(context)
+
         # Create or resume session
         if session is None:
             session = self._create_session(task, repo_path, context)
@@ -237,7 +249,31 @@ class Orchestrator:
             session.status = SessionStatus.ABORTED
             raise
 
+        # Analyze doc impact if planning completed successfully
+        if session.status == SessionStatus.COMPLETED and doc_arch.routing_table:
+            final_plan = self._extract_final_plan(session)
+            impact_analysis = analyze_plan_impact(final_plan, doc_arch, task)
+            session.doc_impact_analysis = impact_analysis.to_dict()
+
         return session
+
+    def _extract_final_plan(self, session: Session) -> str:
+        """Extract the final plan content from the session."""
+        # Look for the last integrator turn
+        for turn in reversed(session.conversation):
+            if turn.phase == "integrator":
+                return turn.content
+
+        # Fall back to last architect turn
+        for turn in reversed(session.conversation):
+            if turn.phase == "architect":
+                return turn.content
+
+        # Fall back to last turn
+        if session.conversation:
+            return session.conversation[-1].content
+
+        return ""
 
     def _create_session(
         self,
